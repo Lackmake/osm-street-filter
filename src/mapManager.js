@@ -429,3 +429,41 @@ export function flyToLocation(lng, lat, zoom = 15) {
   if (!map) return;
   map.flyTo({ center: [lng, lat], zoom, speed: 1.2 });
 }
+
+export function focusOnStreetFeature(feature) {
+  if (!map || !feature || !feature.geometry || !feature.geometry.coordinates) return;
+
+  const coords = feature.geometry.coordinates;
+  if (coords.length === 0) return;
+
+  let minLng = coords[0][0], maxLng = coords[0][0];
+  let minLat = coords[0][1], maxLat = coords[0][1];
+
+  for (const pt of coords) {
+    if (pt[0] < minLng) minLng = pt[0];
+    if (pt[0] > maxLng) maxLng = pt[0];
+    if (pt[1] < minLat) minLat = pt[1];
+    if (pt[1] > maxLat) maxLat = pt[1];
+  }
+
+  const midLng = (minLng + maxLng) / 2;
+  const midLat = (minLat + maxLat) / 2;
+
+  // Set layer data with single feature
+  const singleCollection = {
+    type: 'FeatureCollection',
+    features: [feature]
+  };
+  updateMapData(singleCollection);
+
+  // Fit bounds to feature geometry with padding
+  map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
+    padding: { top: 120, bottom: 120, left: 120, right: 120 },
+    maxZoom: 17.5,
+    duration: 1200
+  });
+
+  // Open the popup showing detailed filter evaluation
+  showStreetPopup([midLng, midLat], feature.properties);
+}
+

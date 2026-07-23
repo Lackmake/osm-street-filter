@@ -126,6 +126,69 @@ export async function fetchOverpassStreets(bbox, onStatusUpdate = () => {}) {
   throw new Error(`All Overpass API servers failed. ${lastError ? lastError.message : ''}`);
 }
 
+/**
+ * Query Overpass API for a single OSM way by ID
+ * @param {string|number} wayId
+ * @param {Function} [onStatusUpdate]
+ * @returns {Promise<Object>} Single street GeoJSON feature
+ */
+export async function fetchWayById(wayId, onStatusUpdate = () => {}) {
+  const cleanId = String(wayId).trim().replace(/^(?:way\/|osm\/|w\/)?/i, '').replace(/[^0-9]/g, '');
+  if (!cleanId) {
+    throw new Error('Please enter a valid numeric OSM Way ID (e.g. 10478174 or way/10478174).');
+  }
+
+  const query = `
+    [out:json][timeout:25];
+    (
+      way(${cleanId});
+    );
+    out body;
+    >;
+    out skel qt;
+  `;
+
+  const endpoints = getActiveEndpoints();
+  let lastError = null;
+
+  for (let i = 0; i < endpoints.length; i++) {
+    const endpoint = endpoints[i];
+    const hostName = getHostName(endpoint);
+    onStatusUpdate(`Fetching OSM Way #${cleanId} via ${hostName}...`, endpoint);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query)
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const parsed = parseOverpassData(data);
+
+      if (!parsed.streets.features || parsed.streets.features.length === 0) {
+        const wayElem = data.elements ? data.elements.find(el => el.type === 'way' && String(el.id) === cleanId) : null;
+        if (wayElem) {
+          throw new Error(`OSM Way #${cleanId} exists but is not tagged as a street (highway=*). Tags found: ${JSON.stringify(wayElem.tags || {})}`);
+        } else {
+          throw new Error(`OSM Way #${cleanId} was not found on OpenStreetMap.`);
+        }
+      }
+
+      return parsed.streets.features[0];
+    } catch (err) {
+      console.warn(`Overpass endpoint ${endpoint} failed for Way #${cleanId}:`, err.message);
+      lastError = err;
+    }
+  }
+
+  throw new Error(lastError ? lastError.message : `Failed to fetch OSM Way #${cleanId}.`);
+}
+
 function getHostName(url) {
   try {
     return new URL(url).hostname;

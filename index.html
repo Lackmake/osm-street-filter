@@ -35,7 +35,7 @@
             <circle cx="11" cy="11" r="8"/>
             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          <input type="text" id="search-input" placeholder="Search city, address, or location..." autocomplete="off">
+          <input type="text" id="search-input" placeholder="Search location or OSM Way ID (e.g. 10478174)..." autocomplete="off">
           <button id="search-clear-btn" class="search-clear-btn" hidden>×</button>
         </div>
         <div id="search-results" class="search-results-dropdown" hidden></div>
@@ -43,6 +43,14 @@
 
       <!-- Primary Action -->
       <div class="header-actions">
+        <button id="header-rules-btn" class="btn btn-outline">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>
+            <path d="M6 6h10"/>
+            <path d="M6 10h10"/>
+          </svg>
+          <span>Filter Rules</span>
+        </button>
         <button id="header-fetch-btn" class="btn btn-primary">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
@@ -59,6 +67,7 @@
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
           <h2>Filter Controls</h2>
+          <button id="mobile-rules-btn" class="btn btn-sm btn-outline mobile-only">Filter Rules</button>
           <button id="sidebar-toggle-btn" class="icon-btn mobile-only" aria-label="Toggle sidebar">✕</button>
         </div>
 
@@ -96,6 +105,16 @@
             <div class="setting-hint">Leave blank to use automatic failover default mirrors.</div>
           </div>
 
+          <!-- Single OSM Street Inspector Card -->
+          <div class="card inspector-card">
+            <div class="setting-title">Inspect Single OSM Street</div>
+            <div class="setting-input-group">
+              <input type="text" id="inspect-way-input" placeholder="OSM Way ID (e.g. 10478174)" autocomplete="off">
+              <button id="inspect-way-btn" class="btn btn-sm btn-primary">Inspect</button>
+            </div>
+            <div class="setting-hint">Enter a way ID to pan directly to it and view rule evaluation.</div>
+          </div>
+
           <!-- View Mode & Layers Section -->
           <div class="display-mode-section">
             <div class="section-title">Display Mode</div>
@@ -127,6 +146,47 @@
       <!-- Map Container -->
       <div id="map" class="map-container"></div>
     </main>
+  </div>
+
+  <!-- Filter Rules Modal -->
+  <div id="filter-rules-modal" class="modal-overlay hidden" aria-hidden="true" role="dialog" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>
+              <path d="M6 6h10"/>
+              <path d="M6 10h10"/>
+            </svg>
+          </div>
+          <div>
+            <h2 id="modal-title" class="modal-title">Street Inclusion & Exclusion Filter Rules</h2>
+            <p class="modal-subtitle">Priority-ordered evaluation steps executed sequentially top-to-bottom</p>
+          </div>
+        </div>
+        <button id="close-modal-btn" class="modal-close-btn" aria-label="Close rules modal">&times;</button>
+      </div>
+
+      <div class="modal-controls">
+        <div class="modal-search-wrapper">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="rules-search-input" placeholder="Search rules or OSM tags (e.g. foot, sidewalk, surface, trunk)..." autocomplete="off">
+        </div>
+        <div class="segmented-control rules-filter-segmented">
+          <button class="segmented-btn active" data-rules-filter="all">All (10)</button>
+          <button class="segmented-btn" data-rules-filter="include">Include</button>
+          <button class="segmented-btn" data-rules-filter="exclude">Exclude</button>
+        </div>
+      </div>
+
+      <div id="rules-list-container" class="modal-scrollable">
+        <!-- Step cards rendered dynamically -->
+      </div>
+    </div>
   </div>
 
   <script type="module" src="./src/app.js"></script>

@@ -2,9 +2,10 @@
  * Main Application Bootstrap & UI Controller
  */
 
-import { initMap, updateMapData, updateNatureAreasData, toggleNatureAreasVisibility, setLayerFilters, flyToLocation } from './mapManager.js';
-import { fetchOverpassStreets, getCustomEndpoint, setCustomEndpoint } from './overpassService.js';
+import { initMap, updateMapData, updateNatureAreasData, toggleNatureAreasVisibility, setLayerFilters, flyToLocation, focusOnStreetFeature } from './mapManager.js';
+import { fetchOverpassStreets, fetchWayById, getCustomEndpoint, setCustomEndpoint } from './overpassService.js';
 import { searchLocation } from './locationSearch.js';
+import { FILTER_RULES } from './filterRulesData.js';
 import { getHighwayColor } from './filterEngine.js';
 
 // Application State
@@ -15,7 +16,9 @@ const state = {
   hiddenHighways: new Set(),
   showNatureAreas: false,
   isFetching: false,
-  highwayBreakdown: {}
+  highwayBreakdown: {},
+  rulesFilterMode: 'all', // 'all' | 'include' | 'exclude'
+  rulesSearchQuery: ''
 };
 
 // DOM Elements
@@ -23,9 +26,12 @@ let headerFetchBtn, sidebarFetchBtn, fetchSpinner, fetchIcon, fetchBtnLabel;
 let statusBanner, zoomLevelEl, natureAreasToggle;
 let providerBadge, providerText, providerDot;
 let customEndpointInput, saveEndpointBtn;
+let inspectWayInput, inspectWayBtn;
 let highwayListEl, typeResetBtn;
 let searchInput, searchClearBtn, searchResults;
 let sidebar, sidebarToggleBtn;
+let headerRulesBtn, mobileRulesBtn, filterRulesModal, closeModalBtn;
+let rulesSearchInput, rulesListContainer, rulesFilterBtns;
 
 document.addEventListener('DOMContentLoaded', () => {
   // 1. Initialize Map
@@ -53,6 +59,8 @@ function bindDOM() {
   providerDot = providerBadge ? providerBadge.querySelector('.provider-dot') : null;
   customEndpointInput = document.getElementById('custom-endpoint-input');
   saveEndpointBtn = document.getElementById('save-endpoint-btn');
+  inspectWayInput = document.getElementById('inspect-way-input');
+  inspectWayBtn = document.getElementById('inspect-way-btn');
 
   highwayListEl = document.getElementById('highway-list');
   typeResetBtn = document.getElementById('type-reset-btn');
@@ -62,6 +70,15 @@ function bindDOM() {
   searchResults = document.getElementById('search-results');
   sidebar = document.getElementById('sidebar');
   sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+
+  // Modal DOM Elements
+  headerRulesBtn = document.getElementById('header-rules-btn');
+  mobileRulesBtn = document.getElementById('mobile-rules-btn');
+  filterRulesModal = document.getElementById('filter-rules-modal');
+  closeModalBtn = document.getElementById('close-modal-btn');
+  rulesSearchInput = document.getElementById('rules-search-input');
+  rulesListContainer = document.getElementById('rules-list-container');
+  rulesFilterBtns = document.querySelectorAll('[data-rules-filter]');
 
   if (customEndpointInput) {
     customEndpointInput.value = getCustomEndpoint();
@@ -73,6 +90,35 @@ function attachEventListeners(map) {
   const triggerFetch = () => handleFetchStreets(map);
   headerFetchBtn.addEventListener('click', triggerFetch);
   sidebarFetchBtn.addEventListener('click', triggerFetch);
+
+  // Filter Rules Modal Event Listeners
+  if (headerRulesBtn) headerRulesBtn.addEventListener('click', openRulesModal);
+  if (mobileRulesBtn) mobileRulesBtn.addEventListener('click', openRulesModal);
+  if (closeModalBtn) closeModalBtn.addEventListener('click', closeRulesModal);
+
+  if (filterRulesModal) {
+    filterRulesModal.addEventListener('click', (e) => {
+      if (e.target === filterRulesModal) closeRulesModal();
+    });
+  }
+
+  if (rulesSearchInput) {
+    rulesSearchInput.addEventListener('input', (e) => {
+      state.rulesSearchQuery = e.target.value.toLowerCase().trim();
+      renderFilterRules();
+    });
+  }
+
+  if (rulesFilterBtns) {
+    rulesFilterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        rulesFilterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.rulesFilterMode = btn.dataset.rulesFilter;
+        renderFilterRules();
+      });
+    });
+  }
 
   // Nature Areas Layer Toggle
   if (natureAreasToggle) {
@@ -93,6 +139,20 @@ function attachEventListeners(map) {
     });
   }
 
+  // Inspect Single Street Action
+  if (inspectWayBtn) {
+    inspectWayBtn.addEventListener('click', () => {
+      handleInspectStreetId(inspectWayInput.value);
+    });
+  }
+  if (inspectWayInput) {
+    inspectWayInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        handleInspectStreetId(inspectWayInput.value);
+      }
+    });
+  }
+
   // Map zoom level indicator
   map.on('zoom', () => {
     const zoom = Math.round(map.getZoom() * 10) / 10;
@@ -101,7 +161,7 @@ function attachEventListeners(map) {
   });
 
   // View Mode Segmented Controls
-  const segmentedBtns = document.querySelectorAll('.segmented-btn');
+  const segmentedBtns = document.querySelectorAll('.display-mode-section .segmented-btn');
   segmentedBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       segmentedBtns.forEach(b => b.classList.remove('active'));
@@ -118,7 +178,7 @@ function attachEventListeners(map) {
     renderHighwayBreakdown();
   });
 
-  // Location Search
+  // Location & Way ID Search
   let searchDebounce = null;
   searchInput.addEventListener('input', (e) => {
     const val = e.target.value;
@@ -129,7 +189,16 @@ function attachEventListeners(map) {
       return;
     }
     searchDebounce = setTimeout(async () => {
+      const numMatch = val.trim().match(/^(?:way\/|osm\/|w\/)?(\d+)$/i);
       const results = await searchLocation(val);
+      if (numMatch) {
+        const wayId = numMatch[1];
+        results.unshift({
+          isWayInspection: true,
+          wayId,
+          name: `🔍 Inspect OSM Way #${wayId}`
+        });
+      }
       renderSearchResults(results);
     }, 300);
   });
@@ -140,9 +209,11 @@ function attachEventListeners(map) {
     searchResults.hidden = true;
   });
 
-  // Keyboard shortcut: Press Enter to fetch
+  // Keyboard shortcut: Press Enter to fetch or Escape to close modal
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && document.activeElement !== searchInput) {
+    if (e.key === 'Escape' && !filterRulesModal.classList.contains('hidden')) {
+      closeRulesModal();
+    } else if (e.key === 'Enter' && document.activeElement !== searchInput && document.activeElement !== rulesSearchInput) {
       handleFetchStreets(map);
     }
   });
@@ -313,7 +384,7 @@ function renderSearchResults(results) {
   }
 
   searchResults.innerHTML = results.map((item, idx) => `
-    <div class="search-result-item" data-idx="${idx}">
+    <div class="search-result-item ${item.isWayInspection ? 'way-inspection-item' : ''}" data-idx="${idx}">
       ${item.name}
     </div>
   `).join('');
@@ -326,10 +397,129 @@ function renderSearchResults(results) {
       const idx = parseInt(el.dataset.idx, 10);
       const target = results[idx];
       if (target) {
-        flyToLocation(target.lon, target.lat, 15);
         searchResults.hidden = true;
-        searchInput.value = target.name.split(',')[0];
+        if (target.isWayInspection) {
+          searchInput.value = `way/${target.wayId}`;
+          handleInspectStreetId(target.wayId);
+        } else {
+          flyToLocation(target.lon, target.lat, 15);
+          searchInput.value = target.name.split(',')[0];
+        }
       }
     });
   });
 }
+
+async function handleInspectStreetId(wayId) {
+  if (state.isFetching) return;
+
+  const cleanId = String(wayId).trim().replace(/^(?:way\/|osm\/|w\/)?/i, '').replace(/[^0-9]/g, '');
+  if (!cleanId) {
+    alert('Please enter a valid numeric OSM Way ID (e.g. 10478174 or way/10478174).');
+    return;
+  }
+
+  setFetchingState(true, `Inspecting Way #${cleanId}...`);
+
+  try {
+    const feature = await fetchWayById(cleanId, (msg, endpoint) => {
+      setFetchingState(true, msg);
+      if (endpoint) updateProviderDisplay(msg, true);
+    });
+
+    state.currentGeoJSON = { type: 'FeatureCollection', features: [feature] };
+    
+    // Focus map and open popup
+    focusOnStreetFeature(feature);
+
+    computeStats(state.currentGeoJSON);
+    setLayerFilters(state.viewMode, state.hiddenHighways);
+
+    const name = feature.properties.name || 'Unnamed Street';
+    const status = feature.properties.included ? 'Included ✓' : 'Excluded ✗';
+    updateProviderDisplay(`Inspected Way #${cleanId} ("${name}") — ${status}`, false);
+  } catch (err) {
+    console.error('Inspect Way error:', err);
+    alert(`Failed to inspect OSM Way #${cleanId}: ${err.message}`);
+    updateProviderDisplay(`Inspection failed`, false);
+  } finally {
+    setFetchingState(false);
+  }
+}
+
+
+function openRulesModal() {
+  if (!filterRulesModal) return;
+  filterRulesModal.classList.remove('hidden');
+  filterRulesModal.setAttribute('aria-hidden', 'false');
+  renderFilterRules();
+  if (rulesSearchInput) rulesSearchInput.focus();
+}
+
+function closeRulesModal() {
+  if (!filterRulesModal) return;
+  filterRulesModal.classList.add('hidden');
+  filterRulesModal.setAttribute('aria-hidden', 'true');
+}
+
+function renderFilterRules() {
+  if (!rulesListContainer) return;
+
+  const query = state.rulesSearchQuery;
+  const mode = state.rulesFilterMode;
+
+  const filtered = FILTER_RULES.filter(rule => {
+    // Mode filter ('all' | 'include' | 'exclude')
+    if (mode === 'include' && rule.action !== 'include') return false;
+    if (mode === 'exclude' && rule.action !== 'exclude') return false;
+
+    // Search query filter
+    if (query) {
+      const matchTitle = rule.title.toLowerCase().includes(query);
+      const matchTags = rule.tags.toLowerCase().includes(query);
+      const matchSummary = rule.summary.toLowerCase().includes(query);
+      const matchDesc = rule.description.toLowerCase().includes(query);
+      const matchEx = rule.examples.some(ex => ex.toLowerCase().includes(query));
+      return matchTitle || matchTags || matchSummary || matchDesc || matchEx;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    rulesListContainer.innerHTML = `
+      <div class="empty-state">
+        No evaluation rules match "${state.rulesSearchQuery}". Try another tag or clear the search.
+      </div>
+    `;
+    return;
+  }
+
+  rulesListContainer.innerHTML = filtered.map(rule => `
+    <div class="rule-step-card action-${rule.action}">
+      <div class="rule-card-header">
+        <div class="rule-title-group">
+          <span class="step-number-badge">Step ${rule.step}</span>
+          <h3 class="rule-card-title">${rule.title}</h3>
+        </div>
+        <span class="action-badge ${rule.action}">
+          ${rule.action === 'include' ? '✓ INCLUDE' : '✗ EXCLUDE'}
+        </span>
+      </div>
+
+      <div class="rule-tags-box">
+        <code>${rule.tags}</code>
+      </div>
+
+      <p class="rule-summary">${rule.summary}</p>
+      <p class="rule-description">${rule.description}</p>
+
+      ${rule.examples && rule.examples.length > 0 ? `
+        <div class="rule-examples-group">
+          <span class="example-label">Examples:</span>
+          ${rule.examples.map(ex => `<span class="example-chip">${ex}</span>`).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `).join('');
+}
+
